@@ -1,8 +1,31 @@
+---
+title: "Star Wars Scripts - Natural Language Processing"
+author: "Steven Pawley"
+date: "16/08/2021"
+output: 
+  html_document: 
+    theme: yeti
+    highlight: zenburn
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# The Data
+
+```{r}
 library(here)
 library(tidyverse)
 library(tidytext)
 library(textdata)
 
+theme_set(theme_minimal())
+```
+
+```{r read-data}
 newhope <-
   read_delim(
     here("data/SW_EpisodeIV.txt"),
@@ -35,14 +58,22 @@ sw <- bind_rows(
   `Empire` = empire,
   `ROTJ` = jedi,
   .id = "movie"
-)
+) |> 
+  mutate(
+    actor = str_to_title(actor),
+    movie = factor(movie, levels = c("New Hope", "Empire", "ROTJ"))
+  )
+```
 
-# split sentences
+# Tokenization
+
+```{r tokenize-sentences}
 sw <- sw |>
   unnest_sentences("sentences", "dialogue", drop = FALSE) |>
   nest(sentences = sentences)
+```
 
-# number of lines per character
+```{r number-of-sentences-per-character}
 sw |>
   mutate(movie = factor(movie, levels = c("New Hope", "Empire", "ROTJ"))) |>
   unnest(sentences) |>
@@ -53,26 +84,41 @@ sw |>
   geom_col(width = 0.5) +
   facet_wrap(vars(movie)) +
   theme(axis.title = element_blank())
+```
 
-# tokenization
+```{r tokenize-words}
 sw <- sw |>
   unnest(sentences) |>
   unnest_tokens("words", "sentences", drop = FALSE) |>
   nest(sentences = sentences, words = words)
+```
 
-# remove character names from tokens
-# data("starwars")
-#
-# sw_names <- starwars |>
-#   mutate(name = str_to_lower(name)) |>
-#   separate(name, into = c("first", "last"), sep = " ")
-#
-# sw <- sw |>
-#   mutate(words = map(words, ~ filter(
-#     .x, !words %in% c(sw_names$first, sw_names$last)
-#   )))
+Median length of a sentence in words per character:
 
-# tf-idf
+```{r length-of-sentences}
+library(ggbeeswarm)
+library(ggdist)
+
+sw <- sw |>
+  mutate(length = map_dbl(words, nrow))
+
+sw |>
+  group_by(movie, actor) |>
+  group_modify(~ mutate(.x, n = n()) |> filter(n > 10)) |>
+  ggplot(aes(y = actor, x = length)) +
+  # geom_violin() +
+  geom_quasirandom(size = 0.5, aes(colour = actor), show.legend = FALSE,
+                   groupOnX = FALSE, varwidth = TRUE) +
+  stat_gradientinterval(aes(fill = actor), show.legend = FALSE) +
+  scale_x_log10() +
+  facet_wrap(vars(movie), scales = "free")
+```
+
+# TF-IDF
+
+Term frequency per movie:
+
+```{r tf-idf}
 sw_words <- sw |>
   unnest(words) |>
   count(movie, words, sort = TRUE)
@@ -89,18 +135,23 @@ sw_words <- left_join(sw_words, sw_total) |>
 ggplot(sw_words, aes(tf, fill = movie)) +
   geom_histogram(show.legend = FALSE) +
   facet_wrap(vars(movie), ncol = 2, scales = "free_y")
+```
 
+Rank of frequency of term vs. term frequency:
+
+```{r}
 ggplot(sw_words, aes(rank, tf, colour = movie)) +
   geom_line() +
   scale_x_log10() +
   scale_y_log10() +
   geom_abline(slope = -1, linetype = 3)
+```
 
+Terms with higher term-frequency (TF) - inverse-document frequency (IDF), i.e. terms that occur rarely within each document/movie and therefore might represent important words:
+
+```{r}
 sw_tf_idf <- sw_words |>
   bind_tf_idf(words, movie, n)
-
-sw_tf_idf |>
-  arrange(desc(tf_idf))
 
 sw_tf_idf %>%
   group_by(movie) %>%
@@ -110,33 +161,49 @@ sw_tf_idf %>%
   geom_col(show.legend = FALSE) +
   facet_wrap(vars(movie), ncol = 2, scales = "free") +
   labs(x = "tf-idf", y = NULL)
+```
 
-# most common words by character (excluding stopwords)
-sw |>
+# Unigram Analysis
+
+Top-n most common words per character after stop-word removal:
+
+```{r count-common-words}
+word_counts <- sw |>
   mutate(words = map(words, ~ filter(.x, !words %in% stop_words$word))) |>
   unnest(words) |>
-  group_by(movie, actor) |>
+  group_by(actor) |>
   count(words) |>
-  ungroup() |>
-  filter(actor == "LUKE", n > 3) |>
-  arrange(desc(n)) |>
-  ggplot(aes(y = words, x = n, fill = actor)) +
-  geom_col() +
-  facet_wrap(vars(movie), scales = "free")
+  group_modify(~ mutate(.x, total = n()) |> filter(total > 150)) |> 
+  ungroup()
 
-# length of sentences per character
-sw <- sw |>
-  mutate(length = map_dbl(words, nrow))
+main_characters <- word_counts |> 
+  select(actor) |> 
+  distinct() |> 
+  pull(actor)
+```
 
-sw |>
-  group_by(movie, actor) |>
-  group_modify(~ mutate(.x, n = n()) |> filter(n > 10)) |>
-  summarize(length = median(length)) |>
-  ggplot(aes(y = actor, x = length)) +
-  geom_col() +
-  facet_wrap(vars(movie), scales = "free")
+```{r word-clouds-per-character}
+library(ggwordcloud)
 
-# pre-defined sentiments for single-words
+word_counts |> 
+  ggplot(aes(label = words, colour = actor, size = n)) +
+  geom_text_wordcloud_area() +
+  scale_size_area(max_size = 10)
+```
+
+```{r most-common-words, eval=FALSE, echo=FALSE}
+library(wordcloud)
+
+for (ch in main_characters) {
+  word_counts |> 
+    filter(actor == !!ch) |> 
+    with(wordcloud(words, n))
+}
+```
+
+Sentiment analysis of single-words:
+
+```{r sentiments}
 sw <- sw |>
   mutate(sentiments = map(
     words,
@@ -187,13 +254,11 @@ left_join(df, positive) |>
   ggplot(aes(y = reorder(actor, positive), x = prop, fill = sentiment)) +
   geom_col() +
   scale_fill_brewer(palette = "RdBu")
+```
 
-# sentiment analysis (bigrams)
-removeWords <- function(str, stopwords) {
-  x <- unlist(strsplit(str, " "))
-  paste(x[!x %in% stopwords], collapse = " ")
-}
+# Bigrams
 
+```{r bigrams}
 sw <- sw |>
   unnest(sentences) |>
   unnest_tokens(
@@ -217,3 +282,5 @@ sw |>
   ggplot(aes(y = bigrams, x = n)) +
   geom_col(show.legend = FALSE) +
   facet_wrap(vars(actor), scales = "free")
+```
+

@@ -131,9 +131,10 @@ sw <- sw |>
 sw |>
   group_by(movie, actor) |>
   group_modify(~ mutate(.x, n = n()) |> filter(n > 10)) |>
+  summarize(length = median(length)) |>
   ggplot(aes(y = actor, x = length)) +
   geom_col() +
-  facet_wrap(vars(movie), scales = "free_y")
+  facet_wrap(vars(movie), scales = "free")
 
 # pre-defined sentiments for single-words
 sw <- sw |>

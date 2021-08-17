@@ -1,6 +1,7 @@
 library(here)
 library(tidyverse)
 library(tidytext)
+library(textdata)
 
 newhope <-
   read_delim(
@@ -215,11 +216,3 @@ sw |>
   ggplot(aes(y = bigrams, x = n)) +
   geom_col(show.legend = FALSE) +
   facet_wrap(vars(actor), scales = "free")
-
-sw |>
-  mutate(negative = map(
-    bigrams,
-    ~ inner_join(.x, get_sentiments(lexicon = "nrc"), by = c("word1" = "word")) |>
-      filter(sentiment == "negative")
-  )) |>
-  unnest(negative)

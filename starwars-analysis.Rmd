@@ -16,42 +16,30 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
 # The Data
 
-```{r}
+```{r packages}
 library(here)
 library(tidyverse)
 library(tidytext)
 library(textdata)
+library(patchwork)
 
-theme_set(theme_minimal())
+theme_set(theme_light())
 ```
 
 ```{r read-data}
-newhope <-
+read_script <- function(file) {
   read_delim(
-    here("data/SW_EpisodeIV.txt"),
+    file,
     delim = " ",
     trim_ws = TRUE,
     skip = 1,
-    col_names = c("line", "actor", "dialogue")
+    col_names = c("line", "role", "dialogue")
   )
+}
 
-empire <-
-  read_delim(
-    here("data/SW_EpisodeV.txt"),
-    delim = " ",
-    trim_ws = TRUE,
-    skip = 1,
-    col_names = c("line", "actor", "dialogue")
-  )
-
-jedi <-
-  read_delim(
-    here("data/SW_EpisodeVI.txt"),
-    delim = " ",
-    trim_ws = TRUE,
-    skip = 1,
-    col_names = c("line", "actor", "dialogue")
-  )
+newhope <- read_script(here("data/SW_EpisodeIV.txt"))
+empire <- read_script(here("data/SW_EpisodeV.txt"))
+jedi <- read_script(here("data/SW_EpisodeVI.txt"))
 
 sw <- bind_rows(
   `New Hope` = newhope,
@@ -60,12 +48,14 @@ sw <- bind_rows(
   .id = "movie"
 ) |> 
   mutate(
-    actor = str_to_title(actor),
+    role = str_to_title(role),
     movie = factor(movie, levels = c("New Hope", "Empire", "ROTJ"))
   )
 ```
 
 # Tokenization
+
+## Tokenize sentences
 
 ```{r tokenize-sentences}
 sw <- sw |>
@@ -73,18 +63,37 @@ sw <- sw |>
   nest(sentences = sentences)
 ```
 
+Plot the number of sentences spoken by each character per movie:
+
 ```{r number-of-sentences-per-character}
-sw |>
-  mutate(movie = factor(movie, levels = c("New Hope", "Empire", "ROTJ"))) |>
+n_sentences <- sw |>
   unnest(sentences) |>
-  group_by(actor, movie) |>
-  count() |>
-  filter(n > 10) |>
-  ggplot(aes(y = reorder(actor, n), x = n)) +
-  geom_col(width = 0.5) +
+  group_by(role, movie) |>
+  count() |> 
+  ungroup()
+
+n_sentences |> 
+  filter(n > 50) |> 
+  ggplot(aes(y = reorder(role, n), x = n, fill = role)) +
+  geom_col(width = 0.5, show.legend = FALSE) +
   facet_wrap(vars(movie)) +
   theme(axis.title = element_blank())
 ```
+
+Use this information to define the main characters of the trilogy, based on those that speak > 100 sentences:
+
+```{r main-characters}
+main_characters <- n_sentences |> 
+  group_by(role) |> 
+  summarize(n = sum(n)) |> 
+  filter(n > 100) |> 
+  distinct(role) |> 
+  pull(role)
+
+main_characters
+```
+
+## Tokenize individual words
 
 ```{r tokenize-words}
 sw <- sw |>
@@ -93,7 +102,7 @@ sw <- sw |>
   nest(sentences = sentences, words = words)
 ```
 
-Median length of a sentence in words per character:
+Median length of a sentence in words per character. Minor role characters that have less than 25 sentences in the movie are removed from the plot so that each distribution has at least 25 observations. Also, outliers have been removed by eliminating sentences that have lengths > mean(length) + 2SD.
 
 ```{r length-of-sentences}
 library(ggbeeswarm)
@@ -103,22 +112,23 @@ sw <- sw |>
   mutate(length = map_dbl(words, nrow))
 
 sw |>
-  group_by(movie, actor) |>
-  group_modify(~ mutate(.x, n = n()) |> filter(n > 10)) |>
-  ggplot(aes(y = actor, x = length)) +
-  # geom_violin() +
-  geom_quasirandom(size = 0.5, aes(colour = actor), show.legend = FALSE,
+  group_by(movie, role) |>
+  filter(length < (mean(length) + 2 * sd(length))) |> 
+  filter(n() >= 25) |> 
+  ggplot(aes(y = role, x = length)) +
+  geom_quasirandom(size = 0.5, aes(colour = role), show.legend = FALSE,
                    groupOnX = FALSE, varwidth = TRUE) +
-  stat_gradientinterval(aes(fill = actor), show.legend = FALSE) +
-  scale_x_log10() +
-  facet_wrap(vars(movie), scales = "free")
+  stat_gradientinterval(aes(fill = role), show.legend = FALSE) +
+  facet_wrap(vars(movie), scales = "free") +
+  theme(axis.title.y = element_blank()) +
+  xlab("Number of words per sentence")
 ```
 
 # TF-IDF
 
 Term frequency per movie:
 
-```{r tf-idf}
+```{r tf-idf, fig.height=3}
 sw_words <- sw |>
   unnest(words) |>
   count(movie, words, sort = TRUE)
@@ -134,71 +144,64 @@ sw_words <- left_join(sw_words, sw_total) |>
 
 ggplot(sw_words, aes(tf, fill = movie)) +
   geom_histogram(show.legend = FALSE) +
-  facet_wrap(vars(movie), ncol = 2, scales = "free_y")
+  facet_wrap(vars(movie), ncol = 3, scales = "free_y") +
+  ylab("Count") +
+  xlab("Term-Frequency (TF)")
 ```
 
 Rank of frequency of term vs. term frequency:
 
-```{r}
+```{r log-log-plot-tf-idf}
 ggplot(sw_words, aes(rank, tf, colour = movie)) +
   geom_line() +
   scale_x_log10() +
   scale_y_log10() +
-  geom_abline(slope = -1, linetype = 3)
+  geom_abline(slope = -1, linetype = 3) +
+  labs(colour = "Movie") +
+  ylab("Term Frequency (TF)") +
+  xlab("Relative ranking of term")
 ```
 
 Terms with higher term-frequency (TF) - inverse-document frequency (IDF), i.e. terms that occur rarely within each document/movie and therefore might represent important words:
 
-```{r}
+```{r tf-idf-rare-words, fig.height=4}
 sw_tf_idf <- sw_words |>
   bind_tf_idf(words, movie, n)
 
 sw_tf_idf %>%
   group_by(movie) %>%
-  slice_max(tf_idf, n = 15) %>%
-  ungroup() %>%
+  slice_max(tf_idf, n = 15) |>
+  ungroup() |>
   ggplot(aes(tf_idf, fct_reorder(words, tf_idf), fill = movie)) +
   geom_col(show.legend = FALSE) +
-  facet_wrap(vars(movie), ncol = 2, scales = "free") +
-  labs(x = "tf-idf", y = NULL)
+  facet_wrap(vars(movie), ncol = 3, scales = "free") +
+  xlab("TF-IDF") +
+  theme(axis.title.y = element_blank())
 ```
 
 # Unigram Analysis
 
-Top-n most common words per character after stop-word removal:
+Most common words per character after stop-word removal. The word clouds show the number of words per character, normalized by each characters total number of words, i.e. the proportion of word usage.
 
 ```{r count-common-words}
 word_counts <- sw |>
   mutate(words = map(words, ~ filter(.x, !words %in% stop_words$word))) |>
   unnest(words) |>
-  group_by(actor) |>
+  group_by(role) |>
   count(words) |>
-  group_modify(~ mutate(.x, total = n()) |> filter(total > 150)) |> 
+  mutate(total = n()) |> 
   ungroup()
-
-main_characters <- word_counts |> 
-  select(actor) |> 
-  distinct() |> 
-  pull(actor)
 ```
 
-```{r word-clouds-per-character}
+```{r word-clouds-per-character, fig.height=8, fig.width=8}
 library(ggwordcloud)
 
 word_counts |> 
-  ggplot(aes(label = words, colour = actor, size = n)) +
+  filter(n > 2, role %in% main_characters) |> 
+  ggplot(aes(label = words, colour = role, size = n / total)) +
   geom_text_wordcloud_area() +
-  scale_size_area(max_size = 10)
-```
-
-```{r most-common-words, eval=FALSE, echo=FALSE}
-library(wordcloud)
-
-for (ch in main_characters) {
-  word_counts |> 
-    filter(actor == !!ch) |> 
-    with(wordcloud(words, n))
-}
+  scale_size_area(max_size = 10) +
+  facet_wrap(vars(role), scales = "free")
 ```
 
 Sentiment analysis of single-words:
@@ -219,41 +222,28 @@ sentiment_order <-
 df <- sw |>
   select(-words) |>
   unnest(sentiments) |>
-  group_by(actor, movie) |>
+  group_by(role, movie) |>
   count(sentiment) |>
   mutate(sentiment = factor(sentiment, levels = sentiment_order)) |>
-  group_by(actor, movie) |>
+  group_by(role, movie) |>
   mutate(prop = n / sum(n))
 
 positive <- df |>
   filter(sentiment %in% c("surprise", "positive", "anticipation", "joy", "trust")) |>
-  group_by(actor, movie, sentiment) |>
+  group_by(role, movie, sentiment) |>
   summarize(positive = sum(n)) |>
   summarize(positive = sum(positive))
 
 left_join(df, positive) |>
-  filter(movie == "New Hope") |>
   mutate(positive = positive / sum(n)) |>
-  group_modify(~ filter(.x, sum(n) > 15)) |>
-  ggplot(aes(y = reorder(actor, positive), x = prop, fill = sentiment)) +
+  group_modify(~ filter(.x, sum(n) > 50)) |>
+  ggplot(aes(y = reorder(role, positive), x = prop, fill = sentiment)) +
   geom_col() +
-  scale_fill_brewer(palette = "RdBu")
-
-left_join(df, positive) |>
-  filter(movie == "Empire") |>
-  mutate(positive = positive / sum(n)) |>
-  group_modify(~ filter(.x, sum(n) > 15)) |>
-  ggplot(aes(y = reorder(actor, positive), x = prop, fill = sentiment)) +
-  geom_col() +
-  scale_fill_brewer(palette = "RdBu")
-
-left_join(df, positive) |>
-  filter(movie == "ROTJ") |>
-  mutate(positive = positive / sum(n)) |>
-  group_modify(~ filter(.x, sum(n) > 15)) |>
-  ggplot(aes(y = reorder(actor, positive), x = prop, fill = sentiment)) +
-  geom_col() +
-  scale_fill_brewer(palette = "RdBu")
+  scale_fill_brewer(palette = "RdBu") +
+  xlab("Proportion of words") +
+  labs(fill = "Sentiment") +
+  theme(axis.title.y = element_blank()) +
+  facet_wrap(vars(movie), scales = "free")
 ```
 
 # Bigrams
@@ -270,17 +260,28 @@ sw <- sw |>
   ) |>
   nest(bigrams = bigrams)
 
-sw |>
+plot_bigrams <- function(df, film, fill, min_bigrams = 300) {
+ df |>
   unnest(bigrams) |>
-  group_by(movie, actor) |>
+  group_by(movie, role) |>
   count(bigrams) |>
-  filter(movie == "Empire") |>
+  filter(movie == !!film) |>
   arrange(desc(n), .by_group = TRUE) |>
   slice(1:10) |>
   drop_na(bigrams) |>
-  group_modify(~ mutate(.x, total = sum(n)) |> filter(total > 200)) |>
+  group_modify(~ filter(.x, sum(n) > !!min_bigrams)) |>
   ggplot(aes(y = bigrams, x = n)) +
-  geom_col(show.legend = FALSE) +
-  facet_wrap(vars(actor), scales = "free")
+    geom_col(show.legend = FALSE, fill = fill) +
+    facet_wrap(vars(role), scales = "free") +
+    xlab("Number of occurrences") +
+    theme(axis.title.y = element_blank())
+}
+
+plot_bigrams(sw, "New Hope", RColorBrewer::brewer.pal(3, "Set1")[1]) +
+  ggtitle("New Hope")
+plot_bigrams(sw, "Empire", RColorBrewer::brewer.pal(3, "Set1")[2]) +
+  ggtitle("The Empire Strikes Back")
+plot_bigrams(sw, "ROTJ", RColorBrewer::brewer.pal(3, "Set1")[3]) +
+  ggtitle("Return of the Jedi")
 ```
 

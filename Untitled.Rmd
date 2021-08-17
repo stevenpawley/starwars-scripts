@@ -4,8 +4,10 @@ author: "Steven Pawley"
 date: "16/08/2021"
 output: 
   html_document: 
-    theme: cerulean
-    highlight: kate
+    theme: yeti
+    highlight: zenburn
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -57,7 +59,10 @@ sw <- bind_rows(
   `ROTJ` = jedi,
   .id = "movie"
 ) |> 
-  mutate(movie = factor(movie, levels = c("New Hope", "Empire", "ROTJ")))
+  mutate(
+    actor = str_to_title(actor),
+    movie = factor(movie, levels = c("New Hope", "Empire", "ROTJ"))
+  )
 ```
 
 # Tokenization
@@ -155,7 +160,7 @@ sw |>
   group_by(movie, actor) |>
   count(words) |>
   ungroup() |>
-  filter(actor == "LUKE", n > 3) |>
+  filter(actor == "Luke", n > 3) |>
   arrange(desc(n)) |>
   ggplot(aes(y = words, x = n, fill = actor)) +
   geom_col() +

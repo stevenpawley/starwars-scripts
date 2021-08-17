@@ -236,7 +236,7 @@ positive <- df |>
 
 left_join(df, positive) |>
   mutate(positive = positive / sum(n)) |>
-  group_modify(~ filter(.x, sum(n) > 50)) |>
+  filter(sum(n) > 50) |> 
   ggplot(aes(y = reorder(role, positive), x = prop, fill = sentiment)) +
   geom_col() +
   scale_fill_brewer(palette = "RdBu") +
@@ -269,7 +269,7 @@ plot_bigrams <- function(df, film, fill, min_bigrams = 300) {
   arrange(desc(n), .by_group = TRUE) |>
   slice(1:10) |>
   drop_na(bigrams) |>
-  group_modify(~ filter(.x, sum(n) > !!min_bigrams)) |>
+  filter(sum(n) > !!min_bigrams) |> 
   ggplot(aes(y = bigrams, x = n)) +
     geom_col(show.legend = FALSE, fill = fill) +
     facet_wrap(vars(role), scales = "free") +

@@ -203,7 +203,9 @@ word_counts |>
   scale_size_area(max_size = 10) +
   facet_wrap(vars(role), scales = "free")
 ```
-
+ 
+The word clouds for each character feature many well-known terms that are associated with each character, and also hint at some relationships between some characters.
+ 
 Sentiment analysis of single-words:
 
 ```{r sentiments}
